@@ -47,64 +47,6 @@ size_t fullSize(size_t size);
 */
 size_t serviceSize(size_t size);
 
-/**
-* @brief	invert specified bit in byte pointed by pServiceByte
-* @param	[in, out]	pointer to byte to be changed
-* @param	[in]		number of bit to change
-* @return	void
-*/
-void changeState(char* pServiceByte, int bitNumber);
-
-/**
-* @brief	checks if specified bit is equal to 0
-* @param	[in]	pointer to service byte
-* @param	[in]	number of bit to change
-* @return	int		0		if specified bit is equal to 0
-*					!= 0	if specified bit is not equal to 0
-*/
-int isFree(char* pServiceByte, int bitNumber);
-
-/**
-* @brief	find service byte for memory block in 2-byte precached memory
-* @param	[in, out]	pointer to memory block
-* @param	[out]		number of control bit
-* @return	char*		pointer to control byte
-*/
-char* getServiceByte2(void* ptr, int* pBitNumber);
-
-/**
-* @brief	find service byte for memory block in 4-byte precached memory
-* @param	[in, out]	pointer to memory block
-* @param	[out]		number of control bit
-* @return	char*		pointer to control byte
-*/
-char* getServiceByte4(void* ptr, int* pBitNumber);
-
-/**
-* @brief	allocates memory in 2-byte cache
-* @return	void*	pointer to the beginning of allocated memory
-* @remark	returns valid pointer only if heap->sizeOfTwoBytesFreeMem > 0
-*/
-void* mymalloc2();
-
-/**
-* @brief	allocates memory in 4-byte cache
-* @return	void*	pointer to the beginning of allocated memory
-* @remark	returns valid pointer only if heap->sizeOfFourBytesFreeMem > 0
-*/
-void* mymalloc4();
-
-/**
-* @brief	deallocates memory in 2-byte cache
-* @return	void
-*/
-void myfree2(void* ptr);
-
-/**
-* @brief	deallocates memory in 4-byte cache
-* @return	void
-*/
-void myfree4(void* ptr);
 
 /**
 * @brief	prints binary representation of byte to console
@@ -112,7 +54,6 @@ void myfree4(void* ptr);
 * @return	void
 */
 void printBin(char ch);
-
 
 
 void normalizeSize(size_t* pSize)
@@ -129,6 +70,7 @@ size_t serviceSize(size_t size)
 {
 	return  sizeof(HeapInfo) + size / 4;
 }
+
 
 void printBin(char ch)
 {
@@ -246,6 +188,10 @@ void heapInit(size_t size)
 {
 	normalizeSize(&size);
 	heap = (HeapInfo*)calloc(fullSize(size), sizeof(char));
+	if (!heap)
+	{
+		return;
+	}
 	heap->sizeOfTwoBytesFreeMem = 16 * (size / (16 * 8));
 	heap->sizeOfFourBytesFreeMem = 32 * (size / (32 * 8));
 	heap->sizeOfFreeMem = size - heap->sizeOfTwoBytesFreeMem - heap->sizeOfFourBytesFreeMem;
@@ -275,6 +221,7 @@ void heapReinit()
 	heapInit(size);
 }
 
+
 void* mymalloc(size_t size)
 {
 	if (size == 0)
@@ -289,12 +236,38 @@ void* mymalloc(size_t size)
 	// if we can alloc memory in 2-byte block
 	if ((size <= 2) && heap->sizeOfTwoBytesFreeMem)
 	{
-		return mymalloc2();
+		heap->sizeOfTwoBytesFreeMem -= 2;
+		int bitNumber = 0;
+		char* pServiceByte = heap->pTwoBytesBitBlock;
+		while (*pServiceByte & (SCANER_BYTE << bitNumber))
+		{
+			++bitNumber;
+			if (bitNumber == BITS_IN_BYTE)
+			{
+				bitNumber = 0;
+				pServiceByte++;
+			}
+		}
+		*pServiceByte ^= (SCANER_BYTE << bitNumber);
+		return heap->pTwoBytesStart + (pServiceByte - heap->pTwoBytesBitBlock) * BITS_IN_BYTE * 2 + bitNumber * 2;
 	}
 	// if we can alloc memory in 4-byte block
 	if ((size <= 4) && heap->sizeOfFourBytesFreeMem)
 	{
-		return mymalloc4();
+		heap->sizeOfFourBytesFreeMem -= 4;
+		int bitNumber = 0;
+		char* pServiceByte = heap->pFourBytesBitBlock;
+		while (*pServiceByte & (SCANER_BYTE << bitNumber))
+		{
+			++bitNumber;
+			if (bitNumber == BITS_IN_BYTE)
+			{
+				bitNumber = 0;
+				pServiceByte++;
+			}
+		}
+		*pServiceByte ^= (SCANER_BYTE << bitNumber);
+		return heap->pFourBytesStart + (pServiceByte - heap->pFourBytesBitBlock) * BITS_IN_BYTE * 4 + bitNumber * 4;
 	}
 	char* pCurrent = heap->pBitBlock;
 	char* pAllocStart = pCurrent;
@@ -380,7 +353,6 @@ void* mymalloc(size_t size)
 					pServiceByte[i / 2] |= (HALF_FILLED_BYTE << (4 * (i % 2)));
 					pCheckByte[i / 2] |= (FOURTH_BIT << (4 * (i % 2)));
 				}
-				fullMap();
 			}
 			--pBitByte;
 		}
@@ -397,7 +369,6 @@ void* mymalloc(size_t size)
 					pServiceByte[i / 4] |= (QUARTER_FILLED_BYTE << (2 * (i % 4)));
 					pCheckByte[i / 4] |= (SECOND_BIT << (2 * (i % 4)));
 				}
-				fullMap();
 			}
 			--pBitByte;
 		}
@@ -416,43 +387,6 @@ void* mymalloc(size_t size)
 	return NULL;
 }
 
-void* mymalloc2()
-{
-	heap->sizeOfTwoBytesFreeMem -= 2;
-	int bitNumber = 0;
-	char* pServiceByte = heap->pTwoBytesBitBlock;
-	while(!isFree(pServiceByte, bitNumber))
-	{
-		++bitNumber;
-		if (bitNumber == BITS_IN_BYTE)
-		{
-			bitNumber = 0;
-			pServiceByte++;
-		}
-	}
-	changeState(pServiceByte, bitNumber);
-	return heap->pTwoBytesStart + (pServiceByte - heap->pTwoBytesBitBlock) * BITS_IN_BYTE * 2 + bitNumber * 2;
-}
-
-void* mymalloc4()
-{
-	heap->sizeOfFourBytesFreeMem -= 4;
-	int bitNumber = 0;
-	char* pServiceByte = heap->pFourBytesBitBlock;
-	while (!isFree(pServiceByte, bitNumber))
-	{
-		++bitNumber;
-		if (bitNumber == BITS_IN_BYTE)
-		{
-			bitNumber = 0;
-			pServiceByte++;
-		}
-	}
-	changeState(pServiceByte, bitNumber);
-	return heap->pFourBytesStart + (pServiceByte - heap->pFourBytesBitBlock) * BITS_IN_BYTE * 4 + bitNumber * 4;
-}
-
-
 void myfree(void* ptr)
 {
 	// check if ptr is indeed in heap and locate it
@@ -463,11 +397,27 @@ void myfree(void* ptr)
 	}
 	else if (ptr >= heap->pTwoBytesStart && ptr < heap->pTwoBytesEnd)
 	{
-		myfree2(ptr);
+		int bitNumber;
+		int shift = ((char*)ptr - heap->pTwoBytesStart) / 2;
+		bitNumber = shift % 8;
+		char* pServiceByte = heap->pTwoBytesBitBlock + shift / 8;
+		if (*pServiceByte & (SCANER_BYTE << bitNumber))
+		{
+			*pServiceByte ^= (SCANER_BYTE << bitNumber);
+		}
+		heap->sizeOfTwoBytesFreeMem += 2;
 	}
 	else if (ptr >= heap->pFourBytesStart && ptr < heap->pFourBytesEnd)
 	{
-		myfree4(ptr);
+		int bitNumber;
+		int shift = ((char*)ptr - heap->pFourBytesStart) / 4;
+		bitNumber = shift % 8;
+		char* pServiceByte = heap->pFourBytesBitBlock + shift / 8;
+		if (*pServiceByte & (SCANER_BYTE << bitNumber))
+		{
+			*pServiceByte ^= (SCANER_BYTE << bitNumber);
+		}
+		heap->sizeOfTwoBytesFreeMem += 4;
 	}
 	else
 	{
@@ -504,54 +454,6 @@ void myfree(void* ptr)
 			*pCurrent ^= FILLED_BYTE;
 		}
 	}
-}
-
-void myfree2(void* ptr)
-{
-	int bitNumber;
-	char* pServiceByte = getServiceByte2(ptr, &bitNumber);
-	if (!isFree(pServiceByte, bitNumber))
-	{
-		changeState(pServiceByte, bitNumber);
-	}
-	heap->sizeOfTwoBytesFreeMem += 2;
-}
-
-void myfree4(void* ptr)
-{
-	int bitNumber;
-	char* pServiceByte = getServiceByte4(ptr, &bitNumber);
-	if (!isFree(pServiceByte, bitNumber))
-	{
-		changeState(pServiceByte, bitNumber);
-	}
-	heap->sizeOfTwoBytesFreeMem += 4;
-}
-
-
-char* getServiceByte2(void* pMemoryBlock, int* pBitNumber)
-{
-	int shift = ((char*)pMemoryBlock - heap->pTwoBytesStart) / 2;
-	*pBitNumber = shift % 8;
-	return heap->pTwoBytesBitBlock + shift / 8;
-}
-
-char* getServiceByte4(void* pMemoryBlock, int* pBitNumber)
-{
-	int shift = ((char*)pMemoryBlock - heap->pFourBytesStart) / 4;
-	*pBitNumber = shift % 8;
-	return heap->pFourBytesBitBlock + shift / 8;
-}
-
-
-int isFree(char* pServiceByte, int bitNumber)
-{
-	return !(*pServiceByte & (SCANER_BYTE << bitNumber));
-}
-
-void changeState(char* pServiceByte, int bitNumber)
-{
-	*pServiceByte ^= (SCANER_BYTE << bitNumber);
 }
 
 int toVirtualAddress(void* ptr)
